@@ -12,17 +12,65 @@ services:
       - RABBITMQ_DEFAULT_PASS=guest
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - rabbitmq_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: sqlserver
     environment:
       - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=guest
+      - MSSQL_SA_PASSWORD=YourStrong@Passw0rd
     ports:
       - "1433:1433"
     volumes:
       - sqlserver_data:/var/opt/mssql
+    networks:
+      - rabbitmq_network
+    healthcheck:
+      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "YourStrong@Passw0rd" -Q "SELECT 1" -b -o /dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  orderservice:
+    build:
+      context: .
+      dockerfile: OrderService/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      sqlserver:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=OrdersDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
+    networks:
+      - rabbitmq_network
+
+  processingservice:
+    build:
+      context: .
+      dockerfile: ProcessingService/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      sqlserver:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=OrdersDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
+    networks:
+      - rabbitmq_network
+
+networks:
+  rabbitmq_network:
+    driver: bridge
 
 volumes:
   rabbitmq_data:
