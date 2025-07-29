@@ -3,6 +3,8 @@ using Shared.RabbitMQ;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using RabbitMQ.Client;
+using OrderService.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,10 +25,12 @@ builder.Services.AddHealthChecks()
             HostName = "rabbitmq",
             UserName = "guest",
             Password = "guest"
-        };
+        };  
         return Task.FromResult(factory.CreateConnectionAsync().GetAwaiter().GetResult());
     }, name: "rabbitmq");
 
+builder.Services.AddDbContext<OrderDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -62,6 +66,9 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 
 using (var scope = app.Services.CreateScope())
 {
+    var dbContext = scope.ServiceProvider.GetRequiredService<OrderDbContext>();
+    await dbContext.Database.EnsureCreatedAsync();
+    
     var orderService = scope.ServiceProvider.GetRequiredService<IOrderService>();
     await orderService.InitializeAsync();
 }

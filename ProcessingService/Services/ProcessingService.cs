@@ -30,18 +30,14 @@ namespace ProcessingService.Services
 
         public async Task InitializeAsync()
         {
-            // Initialize publisher for processed orders
             await _publisher.InitializeAsync(
                 RabbitMQConstants.ProcessedOrdersExchange,
                 ExchangeType.Direct);
 
-            // Initialize consumer for new orders
             await _consumer.InitializeAsync(
                 RabbitMQConstants.OrdersQueue,
                 RabbitMQConstants.OrdersExchange,
                 RabbitMQConstants.OrdersRoutingKey);
-
-            // Start consuming orders
             await _consumer.StartConsumingAsync(
                 RabbitMQConstants.OrdersQueue,
                 ProcessOrderAsync);
@@ -55,12 +51,10 @@ namespace ProcessingService.Services
                 throw new InvalidOperationException("Failed to deserialize order message");
             }
 
-            // Simulate order processing
             order.Status = OrderStatus.Processing;
-            await Task.Delay(1000); // Simulate work
+            await Task.Delay(1000);
             order.Status = OrderStatus.Fulfilled;
 
-            // Publish processed order
             var processedMessage = JsonSerializer.Serialize(order);
             await _publisher.PublishAsync(
                 RabbitMQConstants.ProcessedOrdersExchange,

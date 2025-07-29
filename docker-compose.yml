@@ -32,21 +32,17 @@ services:
       - sqlserver_data:/var/opt/mssql
     networks:
       - rabbitmq_network
-    healthcheck:
-      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "YourStrong@Passw0rd" -Q "SELECT 1" -b -o /dev/null
-      interval: 5s
-      timeout: 5s
-      retries: 5
+
 
   orderservice:
     build:
       context: .
       dockerfile: OrderService/Dockerfile
+    ports:
+      - "8080:8080"
     depends_on:
-      rabbitmq:
-        condition: service_healthy
-      sqlserver:
-        condition: service_healthy
+      - rabbitmq
+      - sqlserver
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=OrdersDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
@@ -58,10 +54,8 @@ services:
       context: .
       dockerfile: ProcessingService/Dockerfile
     depends_on:
-      rabbitmq:
-        condition: service_healthy
-      sqlserver:
-        condition: service_healthy
+      - rabbitmq
+      - sqlserver
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=OrdersDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
