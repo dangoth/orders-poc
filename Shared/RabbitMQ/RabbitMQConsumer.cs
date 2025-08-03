@@ -34,6 +34,7 @@ namespace Shared.RabbitMQ
 
             _channel = await _connection.CreateChannelAsync();
 
+            await _channel.ExchangeDeclareAsync(exchange: exchangeName, type: ExchangeType.Direct, durable: true);
             await _channel.QueueDeclareAsync(queue: queueName, durable: true, exclusive: false, autoDelete: false);
             await _channel.QueueBindAsync(queue: queueName, exchange: exchangeName, routingKey: routingKey);
         }

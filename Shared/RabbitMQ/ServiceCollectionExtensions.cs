@@ -1,5 +1,5 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
 
 namespace Shared.RabbitMQ
 {
@@ -7,12 +7,21 @@ namespace Shared.RabbitMQ
     {
         public static IServiceCollection AddRabbitMQ(this IServiceCollection services, string hostName)
         {
-            services.AddSingleton<IRabbitMQConnection>(sp =>
+            services.AddSingleton<ConnectionFactory>(sp =>
             {
-                var logger = sp.GetRequiredService<ILogger<RabbitMQConnection>>();
-                return new RabbitMQConnection(hostName, logger);
+                return new ConnectionFactory
+                {
+                    HostName = "host.docker.internal",
+                    UserName = "guest",
+                    Password = "guest",
+                    AutomaticRecoveryEnabled = true,
+                    NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
+                    RequestedHeartbeat = TimeSpan.FromSeconds(30)
+                };
             });
 
+            services.AddSingleton<RabbitMQConnection>();
+            services.AddSingleton<IRabbitMQConnection>(sp => sp.GetRequiredService<RabbitMQConnection>());
             services.AddSingleton<IRabbitMQPublisher, RabbitMQPublisher>();
             services.AddSingleton<IRabbitMQConsumer, RabbitMQConsumer>();
 

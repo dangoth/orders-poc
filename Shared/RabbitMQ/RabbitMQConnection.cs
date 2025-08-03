@@ -18,10 +18,12 @@ namespace Shared.RabbitMQ
         private readonly ILogger<RabbitMQConnection> _logger;
         private IConnection? _connection;
         private bool _disposed;
+        private const int MaxRetries = 5;
+        private const int RetryDelayMs = 2000;
 
-        public RabbitMQConnection(string hostName, ILogger<RabbitMQConnection> logger)
+        public RabbitMQConnection(ConnectionFactory factory, ILogger<RabbitMQConnection> logger)
         {
-            _connectionFactory = new ConnectionFactory { HostName = hostName };
+            _connectionFactory = factory;
             _logger = logger;
         }
 
@@ -29,51 +31,47 @@ namespace Shared.RabbitMQ
 
         public async Task<bool> TryConnectAsync()
         {
-            try
-            {
-                if (IsConnected)
-                    return true;
-
-                _connection = await _connectionFactory.CreateConnectionAsync();
-
-                _connection.ConnectionShutdownAsync += OnConnectionShutdownAsync;
-                _connection.CallbackExceptionAsync += OnCallbackExceptionAsync;
-                _connection.ConnectionBlockedAsync += OnConnectionBlockedAsync;
-
-                _logger.LogInformation("RabbitMQ connection established");
+            if (IsConnected)
                 return true;
-            }
-            catch (BrokerUnreachableException ex)
+
+            for (int i = 0; i < MaxRetries; i++)
             {
-                _logger.LogError(ex, "RabbitMQ connection failed");
-                return false;
+                try
+                {
+                    _connection = await _connectionFactory.CreateConnectionAsync();
+                    _connection.ConnectionShutdownAsync += (_, e) => 
+                    {
+                        _logger.LogWarning("RabbitMQ connection shutdown. Reason: {0}", e.ReplyText);
+                        return Task.CompletedTask;
+                    };
+
+                    _logger.LogInformation("RabbitMQ connection established");
+                    return true;
+                }
+                catch (BrokerUnreachableException ex)
+                {
+                    _logger.LogWarning(ex, "RabbitMQ connection attempt {Attempt} failed. Retrying in {Delay}ms...", i + 1, RetryDelayMs);
+                    if (i < MaxRetries - 1)
+                        await Task.Delay(RetryDelayMs);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error while connecting to RabbitMQ");
+                    return false;
+                }
             }
-        }
 
-
-        private Task OnConnectionShutdownAsync(object? sender, ShutdownEventArgs e)
-        {
-            _logger.LogWarning("RabbitMQ connection shutdown. Reason: {0}", e.ReplyText);
-            return Task.CompletedTask;
-        }
-
-        private Task OnCallbackExceptionAsync(object? sender, CallbackExceptionEventArgs e)
-        {
-            _logger.LogWarning("RabbitMQ callback exception. Exception: {0}", e.Exception.Message);
-            return Task.CompletedTask;
-        }
-
-        private Task OnConnectionBlockedAsync(object? sender, ConnectionBlockedEventArgs e)
-        {
-            _logger.LogWarning("RabbitMQ connection blocked. Reason: {0}", e.Reason);
-            return Task.CompletedTask;
+            _logger.LogError("Failed to connect to RabbitMQ after {MaxRetries} attempts", MaxRetries);
+            return false;
         }
 
         public async Task<IChannel> CreateChannelAsync()
         {
             if (!IsConnected)
             {
-                throw new InvalidOperationException("RabbitMQ is not connected");
+                var connected = await TryConnectAsync();
+                if (!connected)
+                    throw new InvalidOperationException("RabbitMQ is not connected");
             }
 
             return await _connection!.CreateChannelAsync();
@@ -89,12 +87,7 @@ namespace Shared.RabbitMQ
                 try
                 {
                     if (_connection.IsOpen)
-                    {
-                        _connection.ConnectionShutdownAsync -= OnConnectionShutdownAsync;
-                        _connection.CallbackExceptionAsync -= OnCallbackExceptionAsync;
-                        _connection.ConnectionBlockedAsync -= OnConnectionBlockedAsync;
                         await _connection.CloseAsync();
-                    }
                 }
                 catch (Exception ex)
                 {
