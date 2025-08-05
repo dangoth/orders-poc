@@ -20,8 +20,41 @@ namespace OrderService.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateOrder([FromBody] OrderMessage order)
         {
-            await _orderService.CreateOrderAsync(order);
+            var orderId = await _orderService.CreateOrderAsync(order);
+            return Ok(new { OrderId = orderId, Message = "Order created successfully" });
+        }
+
+        [HttpPost("{orderId}/process")]
+        public async Task<IActionResult> ProcessOrder(string orderId)
+        {
+            await _orderService.ProcessOrderAsync(orderId);
+            return Ok(new { Message = "Order processing started" });
+        }
+
+        [HttpPost("{orderId}/fulfill")]
+        public async Task<IActionResult> FulfillOrder(string orderId)
+        {
+            await _orderService.FulfillOrderAsync(orderId);
+            return Ok(new { Message = "Order fulfilled" });
+        }
+
+        [HttpPost("{orderId}/cancel")]
+        public async Task<IActionResult> CancelOrder(string orderId, [FromBody] CancelOrderRequest request)
+        {
+            await _orderService.CancelOrderAsync(orderId, request.Reason);
+            return Ok(new { Message = "Order cancelled" });
+        }
+
+        [HttpGet("{orderId}")]
+        public async Task<IActionResult> GetOrder(string orderId)
+        {
+            var order = await _orderService.GetOrderAsync(orderId);
             return Ok(order);
         }
+    }
+
+    public class CancelOrderRequest
+    {
+        public string Reason { get; set; } = string.Empty;
     }
 }
