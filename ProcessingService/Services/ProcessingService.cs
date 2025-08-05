@@ -45,23 +45,85 @@ namespace ProcessingService.Services
 
         public async Task ProcessOrderAsync(string message)
         {
-            var order = JsonSerializer.Deserialize<OrderMessage>(message);
-            if (order == null)
+            try
             {
-                throw new InvalidOperationException("Failed to deserialize order message");
+                // Try to deserialize as a domain event first
+                var domainEvent = JsonSerializer.Deserialize<Shared.Models.DomainEvent>(message);
+                if (domainEvent != null)
+                {
+                    await ProcessDomainEventAsync(domainEvent);
+                    return;
+                }
+
+                // Fallback to old format
+                var order = JsonSerializer.Deserialize<OrderMessage>(message);
+                if (order == null)
+                {
+                    throw new InvalidOperationException("Failed to deserialize message");
+                }
+
+                order.Status = OrderStatus.Processing;
+                await Task.Delay(1000);
+                order.Status = OrderStatus.Fulfilled;
+
+                var processedMessage = JsonSerializer.Serialize(order);
+                await _publisher.PublishAsync(
+                    RabbitMQConstants.ProcessedOrdersExchange,
+                    RabbitMQConstants.ProcessedOrdersRoutingKey,
+                    processedMessage);
+
+                _logger.LogInformation("Order processed (legacy format): {OrderId}", order.OrderId);
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing order message: {Message}", message);
+                throw;
+            }
+        }
 
-            order.Status = OrderStatus.Processing;
-            await Task.Delay(1000);
-            order.Status = OrderStatus.Fulfilled;
+        private async Task ProcessDomainEventAsync(Shared.Models.DomainEvent domainEvent)
+        {
+            _logger.LogInformation("Processing domain event: {EventType} for aggregate {AggregateId}", 
+                domainEvent.EventType, domainEvent.AggregateId);
 
-            var processedMessage = JsonSerializer.Serialize(order);
-            await _publisher.PublishAsync(
-                RabbitMQConstants.ProcessedOrdersExchange,
-                RabbitMQConstants.ProcessedOrdersRoutingKey,
-                processedMessage);
+            switch (domainEvent.EventType)
+            {
+                case nameof(Shared.Models.OrderCreatedEvent):
+                    // Order was created, start processing
+                    await Task.Delay(1000); // Simulate processing time
+                    
+                    // Publish processing started event
+                    var processingEvent = new Shared.Models.OrderProcessingStartedEvent(
+                        domainEvent.AggregateId, 
+                        JsonSerializer.Deserialize<OrderMessage>(domainEvent.Data) ?? new OrderMessage());
+                    
+                    var processingMessage = JsonSerializer.Serialize(processingEvent);
+                    await _publisher.PublishAsync(
+                        RabbitMQConstants.ProcessedOrdersExchange,
+                        RabbitMQConstants.ProcessedOrdersRoutingKey,
+                        processingMessage);
+                    break;
 
-            _logger.LogInformation("Order processed: {OrderId}", order.OrderId);
+                case nameof(Shared.Models.OrderProcessingStartedEvent):
+                    // Order processing started, simulate fulfillment
+                    await Task.Delay(2000); // Simulate fulfillment time
+                    
+                    // Publish fulfilled event
+                    var fulfilledEvent = new Shared.Models.OrderFulfilledEvent(
+                        domainEvent.AggregateId,
+                        JsonSerializer.Deserialize<OrderMessage>(domainEvent.Data) ?? new OrderMessage());
+                    
+                    var fulfilledMessage = JsonSerializer.Serialize(fulfilledEvent);
+                    await _publisher.PublishAsync(
+                        RabbitMQConstants.ProcessedOrdersExchange,
+                        RabbitMQConstants.ProcessedOrdersRoutingKey,
+                        fulfilledMessage);
+                    break;
+
+                default:
+                    _logger.LogInformation("Unhandled event type: {EventType}", domainEvent.EventType);
+                    break;
+            }
         }
     }
 }

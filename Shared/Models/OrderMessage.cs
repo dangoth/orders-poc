@@ -9,6 +9,7 @@ namespace Shared.Models
         public decimal TotalAmount { get; set; }
         public string[] ProductIds { get; set; } = Array.Empty<string>();
         public OrderStatus Status { get; set; } = OrderStatus.Created;
+        public string? Reason { get; set; }
     }
 
     public enum OrderStatus

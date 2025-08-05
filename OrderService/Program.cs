@@ -1,4 +1,5 @@
 using OrderService.Services;
+using OrderService.Repositories;
 using Shared.RabbitMQ;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -17,6 +18,8 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddRabbitMQ("rabbitmq");
 builder.Services.AddScoped<IOrderService, OrderService.Services.OrderService>();
+builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+builder.Services.AddScoped<IEventStoreService, EventStoreService>();
 builder.Services.AddHealthChecks()
     .AddRabbitMQ(sp => 
     {
@@ -67,7 +70,7 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<OrderDbContext>();
-    await dbContext.Database.EnsureCreatedAsync();
+    await dbContext.Database.MigrateAsync();
     
     var orderService = scope.ServiceProvider.GetRequiredService<IOrderService>();
     await orderService.InitializeAsync();
