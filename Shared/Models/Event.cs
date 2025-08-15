@@ -21,6 +21,8 @@ namespace Shared.Models
 
     public class OrderCreatedEvent : DomainEvent
     {
+        public OrderCreatedEvent() { }
+        
         public OrderCreatedEvent(string orderId, OrderMessage order)
         {
             AggregateId = orderId;
@@ -31,6 +33,8 @@ namespace Shared.Models
 
     public class OrderProcessingStartedEvent : DomainEvent
     {
+        public OrderProcessingStartedEvent() { }
+        
         public OrderProcessingStartedEvent(string orderId, OrderMessage order)
         {
             AggregateId = orderId;
@@ -41,6 +45,8 @@ namespace Shared.Models
 
     public class OrderFulfilledEvent : DomainEvent
     {
+        public OrderFulfilledEvent() { }
+        
         public OrderFulfilledEvent(string orderId, OrderMessage order)
         {
             AggregateId = orderId;
@@ -51,10 +57,24 @@ namespace Shared.Models
 
     public class OrderCancelledEvent : DomainEvent
     {
+        public OrderCancelledEvent() { }
+        
         public OrderCancelledEvent(string orderId, OrderMessage order)
         {
             AggregateId = orderId;
             EventType = nameof(OrderCancelledEvent);
+            Data = JsonSerializer.Serialize(order);
+        }
+    }
+
+    public class OrderPendingEvent : DomainEvent
+    {
+        public OrderPendingEvent() { }
+        
+        public OrderPendingEvent(string orderId, OrderMessage order)
+        {
+            AggregateId = orderId;
+            EventType = nameof(OrderPendingEvent);
             Data = JsonSerializer.Serialize(order);
         }
     }

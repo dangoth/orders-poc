@@ -20,6 +20,7 @@ builder.Services.AddRabbitMQ("rabbitmq");
 builder.Services.AddScoped<IOrderService, OrderService.Services.OrderService>();
 builder.Services.AddScoped<IOrderRepository, OrderRepository>();
 builder.Services.AddScoped<IEventStoreService, EventStoreService>();
+builder.Services.AddScoped<IInventoryService, InventoryService>();
 builder.Services.AddHealthChecks()
     .AddRabbitMQ(sp => 
     {
@@ -74,6 +75,9 @@ using (var scope = app.Services.CreateScope())
     
     var orderService = scope.ServiceProvider.GetRequiredService<IOrderService>();
     await orderService.InitializeAsync();
+    
+    var inventoryService = scope.ServiceProvider.GetRequiredService<IInventoryService>();
+    await inventoryService.SeedInventoryDataAsync();
 }
 
 app.Run();

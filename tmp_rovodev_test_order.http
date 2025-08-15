@@ -1,0 +1,68 @@
+### Test creating order with multiple products and quantities
+POST http://localhost:5000/api/orders
+Content-Type: application/json
+
+{
+  "customerName": "John Doe",
+  "items": [
+    {
+      "productId": "LAPTOP001",
+      "quantity": 2,
+      "unitPrice": 1299.99
+    },
+    {
+      "productId": "MOUSE001", 
+      "quantity": 3,
+      "unitPrice": 29.99
+    },
+    {
+      "productId": "KEYBOARD001",
+      "quantity": 1,
+      "unitPrice": 89.99
+    }
+  ]
+}
+
+### Test creating order with no products (should fail)
+POST http://localhost:5000/api/orders
+Content-Type: application/json
+
+{
+  "customerName": "Jane Doe",
+  "items": []
+}
+
+### Test creating order with zero quantity (should fail)
+POST http://localhost:5000/api/orders
+Content-Type: application/json
+
+{
+  "customerName": "Bob Smith",
+  "items": [
+    {
+      "productId": "LAPTOP001",
+      "quantity": 0,
+      "unitPrice": 1299.99
+    }
+  ]
+}
+
+### Test creating order with duplicate products (should merge)
+POST http://localhost:5000/api/orders
+Content-Type: application/json
+
+{
+  "customerName": "Alice Johnson",
+  "items": [
+    {
+      "productId": "MOUSE001",
+      "quantity": 2,
+      "unitPrice": 29.99
+    },
+    {
+      "productId": "MOUSE001",
+      "quantity": 1,
+      "unitPrice": 29.99
+    }
+  ]
+}

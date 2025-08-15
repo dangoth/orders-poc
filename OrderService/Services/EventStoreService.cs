@@ -110,6 +110,29 @@ namespace OrderService.Services
                         JsonSerializer.Deserialize<OrderMessage>(eventStore.Data) ?? new OrderMessage()),
                     eventStore),
 
+                nameof(InventoryReservationRequestedEvent) => CreateEvent(
+                    new InventoryReservationRequestedEvent(eventStore.AggregateId,
+                        JsonSerializer.Deserialize<OrderMessage>(eventStore.Data) ?? new OrderMessage()),
+                    eventStore),
+
+                nameof(InventoryReservedEvent) => CreateEvent(
+                    new InventoryReservedEvent(eventStore.AggregateId,
+                        JsonSerializer.Deserialize<InventoryReservationData>(eventStore.Data)?.Order ?? new OrderMessage(),
+                        JsonSerializer.Deserialize<InventoryReservationData>(eventStore.Data)?.Reservations ?? new List<InventoryReservationItem>()),
+                    eventStore),
+
+                nameof(InventoryInsufficientEvent) => CreateEvent(
+                    new InventoryInsufficientEvent(eventStore.AggregateId,
+                        JsonSerializer.Deserialize<InventoryShortageData>(eventStore.Data)?.Order ?? new OrderMessage(),
+                        JsonSerializer.Deserialize<InventoryShortageData>(eventStore.Data)?.Shortages ?? new List<InventoryShortageItem>()),
+                    eventStore),
+
+                nameof(InventoryReleasedEvent) => CreateEvent(
+                    new InventoryReleasedEvent(eventStore.AggregateId,
+                        JsonSerializer.Deserialize<InventoryReleaseData>(eventStore.Data)?.Order ?? new OrderMessage(),
+                        JsonSerializer.Deserialize<InventoryReleaseData>(eventStore.Data)?.Reason ?? "Unknown"),
+                    eventStore),
+
                 _ => throw new InvalidOperationException($"Unknown event type: {eventStore.EventType}")
         };
 
