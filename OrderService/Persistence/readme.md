@@ -1,0 +1,1 @@
+﻿dotnet ef migrations add --output-dir .\Persistence\Migrations\ --project .\OrderService\ RemoveUnusedTables

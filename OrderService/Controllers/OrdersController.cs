@@ -18,10 +18,55 @@ namespace OrderService.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> CreateOrder([FromBody] OrderMessage order)
+        public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequest request)
         {
-            var orderId = await _orderService.CreateOrderAsync(order);
-            return Ok(new { OrderId = orderId, Message = "Order created successfully" });
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            if (request.Items == null || !request.Items.Any())
+            {
+                return BadRequest(new { Error = "At least one product must be selected" });
+            }
+            if (request.Items.Any(item => item.Quantity <= 0))
+            {
+                return BadRequest(new { Error = "All product quantities must be greater than 0" });
+            }
+
+            if (request.Items.Any(item => string.IsNullOrWhiteSpace(item.ProductId)))
+            {
+                return BadRequest(new { Error = "All products must have valid product IDs" });
+            }
+
+            var mergedItems = request.Items
+                .GroupBy(item => item.ProductId)
+                .Select(group => new OrderItem
+                {
+                    ProductId = group.Key,
+                    Quantity = group.Sum(item => item.Quantity),
+                    UnitPrice = group.First().UnitPrice
+                })
+                .ToList();
+
+            var orderMessage = new OrderMessage
+            {
+                CustomerName = request.CustomerName,
+                Items = mergedItems,
+                ProductIds = mergedItems.Select(item => item.ProductId).ToArray(),
+                TotalAmount = mergedItems.Sum(item => item.TotalPrice),
+                Status = OrderStatus.Created
+            };
+
+            try
+            {
+                var orderId = await _orderService.CreateOrderAsync(orderMessage);
+                return Ok(new { OrderId = orderId, Message = "Order created successfully", TotalAmount = orderMessage.TotalAmount });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { Error = ex.Message });
+            }
         }
 
         [HttpPost("{orderId}/process")]
@@ -29,6 +74,13 @@ namespace OrderService.Controllers
         {
             await _orderService.ProcessOrderAsync(orderId);
             return Ok(new { Message = "Order processing started" });
+        }
+
+        [HttpPost("{orderId}/process-pending")]
+        public async Task<IActionResult> ProcessPendingOrder(string orderId)
+        {
+            await _orderService.ProcessPendingOrderAsync(orderId);
+            return Ok(new { Message = "Pending order processing attempted" });
         }
 
         [HttpPost("{orderId}/fulfill")]

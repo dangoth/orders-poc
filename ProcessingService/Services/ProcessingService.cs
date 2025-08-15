@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using Shared.Models;
 using Shared.RabbitMQ;
@@ -47,15 +46,13 @@ namespace ProcessingService.Services
         {
             try
             {
-                // Try to deserialize as a domain event first
-                var domainEvent = JsonSerializer.Deserialize<Shared.Models.DomainEvent>(message);
+                var domainEvent = TryDeserializeDomainEvent(message);
                 if (domainEvent != null)
                 {
                     await ProcessDomainEventAsync(domainEvent);
                     return;
                 }
 
-                // Fallback to old format
                 var order = JsonSerializer.Deserialize<OrderMessage>(message);
                 if (order == null)
                 {
@@ -81,35 +78,37 @@ namespace ProcessingService.Services
             }
         }
 
-        private async Task ProcessDomainEventAsync(Shared.Models.DomainEvent domainEvent)
+        private async Task ProcessDomainEventAsync(DomainEvent domainEvent)
         {
             _logger.LogInformation("Processing domain event: {EventType} for aggregate {AggregateId}", 
                 domainEvent.EventType, domainEvent.AggregateId);
 
             switch (domainEvent.EventType)
             {
-                case nameof(Shared.Models.OrderCreatedEvent):
-                    // Order was created, start processing
-                    await Task.Delay(1000); // Simulate processing time
-                    
-                    // Publish processing started event
-                    var processingEvent = new Shared.Models.OrderProcessingStartedEvent(
-                        domainEvent.AggregateId, 
-                        JsonSerializer.Deserialize<OrderMessage>(domainEvent.Data) ?? new OrderMessage());
-                    
-                    var processingMessage = JsonSerializer.Serialize(processingEvent);
-                    await _publisher.PublishAsync(
-                        RabbitMQConstants.ProcessedOrdersExchange,
-                        RabbitMQConstants.ProcessedOrdersRoutingKey,
-                        processingMessage);
+                case nameof(OrderCreatedEvent):
+                    _logger.LogInformation("Order created: {OrderId}. Waiting for inventory check...", domainEvent.AggregateId);
                     break;
 
-                case nameof(Shared.Models.OrderProcessingStartedEvent):
-                    // Order processing started, simulate fulfillment
-                    await Task.Delay(2000); // Simulate fulfillment time
+                case nameof(OrderPendingEvent):
+                    _logger.LogInformation("Order marked as pending due to insufficient inventory: {OrderId}", domainEvent.AggregateId);
+                    break;
+
+                case nameof(InventoryReservationRequestedEvent):
+                    _logger.LogInformation("Inventory reservation requested for order: {OrderId}", domainEvent.AggregateId);
+                    break;
+
+                case nameof(InventoryReservedEvent):
+                    _logger.LogInformation("Inventory reserved successfully for order: {OrderId}", domainEvent.AggregateId);
+                    break;
+
+                case nameof(InventoryInsufficientEvent):
+                    _logger.LogWarning("Insufficient inventory for order: {OrderId}. Order cancelled.", domainEvent.AggregateId);
+                    break;
+
+                case nameof(OrderProcessingStartedEvent):
+                    await Task.Delay(2000);
                     
-                    // Publish fulfilled event
-                    var fulfilledEvent = new Shared.Models.OrderFulfilledEvent(
+                    var fulfilledEvent = new OrderFulfilledEvent(
                         domainEvent.AggregateId,
                         JsonSerializer.Deserialize<OrderMessage>(domainEvent.Data) ?? new OrderMessage());
                     
@@ -120,9 +119,82 @@ namespace ProcessingService.Services
                         fulfilledMessage);
                     break;
 
+                case nameof(OrderFulfilledEvent):
+                    _logger.LogInformation("Order fulfilled: {OrderId}", domainEvent.AggregateId);
+                    break;
+
+                case nameof(OrderCancelledEvent):
+                    _logger.LogInformation("Order cancelled: {OrderId}", domainEvent.AggregateId);
+                    break;
+
+                case nameof(InventoryReleasedEvent):
+                    _logger.LogInformation("Inventory released for order: {OrderId}", domainEvent.AggregateId);
+                    break;
+
                 default:
                     _logger.LogInformation("Unhandled event type: {EventType}", domainEvent.EventType);
                     break;
+            }
+        }
+
+        private async Task PublishFulfilledEventAsync(DomainEvent domainEvent)
+        {
+            var orderMessage = DeserializeOrderMessage(domainEvent.Data);
+            var fulfilledEvent = new OrderFulfilledEvent(domainEvent.AggregateId, orderMessage);
+            var fulfilledMessage = JsonSerializer.Serialize(fulfilledEvent);
+            
+            await _publisher.PublishAsync(
+                RabbitMQConstants.ProcessedOrdersExchange,
+                RabbitMQConstants.ProcessedOrdersRoutingKey,
+                fulfilledMessage);
+        }
+
+        private DomainEvent? TryDeserializeDomainEvent(string message)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(message);
+                if (!document.RootElement.TryGetProperty("EventType", out var eventTypeElement))
+                {
+                    return null;
+                }
+
+                var eventType = eventTypeElement.GetString();
+                if (string.IsNullOrEmpty(eventType))
+                {
+                    return null;
+                }
+
+                return eventType switch
+                {
+                    nameof(OrderCreatedEvent) => JsonSerializer.Deserialize<OrderCreatedEvent>(message),
+                    nameof(OrderPendingEvent) => JsonSerializer.Deserialize<OrderPendingEvent>(message),
+                    nameof(OrderProcessingStartedEvent) => JsonSerializer.Deserialize<OrderProcessingStartedEvent>(message),
+                    nameof(OrderFulfilledEvent) => JsonSerializer.Deserialize<OrderFulfilledEvent>(message),
+                    nameof(OrderCancelledEvent) => JsonSerializer.Deserialize<OrderCancelledEvent>(message),
+                    nameof(InventoryReservationRequestedEvent) => JsonSerializer.Deserialize<InventoryReservationRequestedEvent>(message),
+                    nameof(InventoryReservedEvent) => JsonSerializer.Deserialize<InventoryReservedEvent>(message),
+                    nameof(InventoryInsufficientEvent) => JsonSerializer.Deserialize<InventoryInsufficientEvent>(message),
+                    nameof(InventoryReleasedEvent) => JsonSerializer.Deserialize<InventoryReleasedEvent>(message),
+                    _ => null
+                };
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private OrderMessage DeserializeOrderMessage(string data)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<OrderMessage>(data) ?? new OrderMessage();
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to deserialize order message. Using default instance.");
+                return new OrderMessage();
             }
         }
     }
