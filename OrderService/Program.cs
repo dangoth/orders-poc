@@ -21,6 +21,9 @@ builder.Services.AddScoped<IOrderService, OrderService.Services.OrderService>();
 builder.Services.AddScoped<IOrderRepository, OrderRepository>();
 builder.Services.AddScoped<IEventStoreService, EventStoreService>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
+builder.Services.AddScoped<ILowStockWarningService, LowStockWarningService>();
+builder.Services.AddScoped<IRabbitMQInitializationService, RabbitMQInitializationService>();
+builder.Services.AddScoped<Shared.Services.IEventPublishingHelper, Shared.Services.EventPublishingHelper>();
 builder.Services.AddHealthChecks()
     .AddRabbitMQ(sp => 
     {
@@ -72,6 +75,9 @@ using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<OrderDbContext>();
     await dbContext.Database.MigrateAsync();
+    
+    var rabbitMQInit = scope.ServiceProvider.GetRequiredService<IRabbitMQInitializationService>();
+    await rabbitMQInit.InitializeAsync();
     
     var orderService = scope.ServiceProvider.GetRequiredService<IOrderService>();
     await orderService.InitializeAsync();

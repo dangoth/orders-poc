@@ -7,12 +7,11 @@ namespace OrderService.Services
 {
     public interface IInventoryService
     {
-        Task<InventoryCheckResult> CheckAndReserveInventoryAsync(string orderId, string[] productIds);
-        Task<InventoryCheckResult> CheckAndReserveInventoryAsync(string orderId, List<OrderItem> items);
+        Task<InventoryCheckResult> CheckAndReserveInventoryAsync(string orderId, IEnumerable<OrderItem> items);
         Task ReleaseInventoryAsync(string orderId, string reason);
         Task FulfillInventoryAsync(string orderId);
-        Task<bool> IsInventoryAvailableAsync(string[] productIds);
-        Task<List<Product>> GetProductsAsync(string[] productIds);
+        Task<bool> IsInventoryAvailableAsync(IEnumerable<string> productIds);
+        Task<List<Product>> GetProductsAsync(IEnumerable<string> productIds);
         Task SeedInventoryDataAsync();
     }
 
@@ -20,28 +19,24 @@ namespace OrderService.Services
     {
         private readonly OrderDbContext _dbContext;
         private readonly ILogger<InventoryService> _logger;
+        private readonly ILowStockWarningService _lowStockWarningService;
 
-        public InventoryService(OrderDbContext dbContext, ILogger<InventoryService> logger)
+        public InventoryService(OrderDbContext dbContext, ILogger<InventoryService> logger, ILowStockWarningService lowStockWarningService)
         {
             _dbContext = dbContext;
             _logger = logger;
+            _lowStockWarningService = lowStockWarningService;
         }
 
-        public async Task<InventoryCheckResult> CheckAndReserveInventoryAsync(string orderId, string[] productIds)
-        {
-            // Legacy method - convert to OrderItems with quantity 1
-            var items = productIds.Select(id => new OrderItem { ProductId = id, Quantity = 1 }).ToList();
-            return await CheckAndReserveInventoryAsync(orderId, items);
-        }
-
-        public async Task<InventoryCheckResult> CheckAndReserveInventoryAsync(string orderId, List<OrderItem> items)
+        public async Task<InventoryCheckResult> CheckAndReserveInventoryAsync(string orderId, IEnumerable<OrderItem> items)
         {
             using var transaction = await _dbContext.Database.BeginTransactionAsync();
             
             try
             {
                 var result = new InventoryCheckResult { OrderId = orderId };
-                var productIds = items.Select(i => i.ProductId).ToArray();
+                var itemsList = items.ToList();
+                var productIds = itemsList.Select(i => i.ProductId).ToArray();
                 
                 var inventoryItems = await _dbContext.InventoryItems
                     .Include(i => i.Product)
@@ -55,12 +50,12 @@ namespace OrderService.Services
                     result.Shortages.AddRange(missingProducts.Select(p => new InventoryShortageItem
                     {
                         ProductId = p,
-                        QuantityRequested = items.First(i => i.ProductId == p).Quantity,
+                        QuantityRequested = itemsList.First(i => i.ProductId == p).Quantity,
                         QuantityAvailable = 0
                     }));
                 }
 
-                foreach (var orderItem in items)
+                foreach (var orderItem in itemsList)
                 {
                     var inventoryItem = inventoryItems.FirstOrDefault(i => i.ProductId == orderItem.ProductId);
                     if (inventoryItem == null) continue; // Already handled in missing products
@@ -108,6 +103,8 @@ namespace OrderService.Services
                     await _dbContext.SaveChangesAsync();
                     await transaction.CommitAsync();
                     _logger.LogInformation("Inventory reserved successfully for order {OrderId}", orderId);
+                    
+                    await _lowStockWarningService.CheckAndWarnLowStockAsync(productIds);
                 }
                 else
                 {
@@ -157,6 +154,9 @@ namespace OrderService.Services
                 await transaction.CommitAsync();
                 
                 _logger.LogInformation("Inventory released for order {OrderId}. Reason: {Reason}", orderId, reason);
+                
+                var affectedProductIds = reservations.Select(r => r.ProductId).Distinct();
+                await _lowStockWarningService.CheckAndWarnLowStockAsync(affectedProductIds);
             }
             catch (Exception ex)
             {
@@ -191,20 +191,22 @@ namespace OrderService.Services
             _logger.LogInformation("Inventory fulfilled for order {OrderId}", orderId);
         }
 
-        public async Task<bool> IsInventoryAvailableAsync(string[] productIds)
+        public async Task<bool> IsInventoryAvailableAsync(IEnumerable<string> productIds)
         {
+            var productIdsList = productIds.ToList();
             var inventoryItems = await _dbContext.InventoryItems
-                .Where(i => productIds.Contains(i.ProductId))
+                .Where(i => productIdsList.Contains(i.ProductId))
                 .ToListAsync();
 
-            return productIds.All(productId => 
+            return productIdsList.All(productId => 
                 inventoryItems.Any(i => i.ProductId == productId && i.QuantityAvailable > 0));
         }
 
-        public async Task<List<Product>> GetProductsAsync(string[] productIds)
+        public async Task<List<Product>> GetProductsAsync(IEnumerable<string> productIds)
         {
+            var productIdsList = productIds.ToList();
             return await _dbContext.Products
-                .Where(p => productIds.Contains(p.ProductId))
+                .Where(p => productIdsList.Contains(p.ProductId))
                 .ToListAsync();
         }
 

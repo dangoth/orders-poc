@@ -9,6 +9,7 @@ namespace OrderService.Repositories
         Task<OrderAggregate> GetByIdAsync(string orderId);
         Task SaveAsync(OrderAggregate order);
         Task<bool> ExistsAsync(string orderId);
+        Task<IEnumerable<DomainEvent>> GetEventsAsync(string orderId);
     }
 
     public class OrderRepository : IOrderRepository
@@ -57,6 +58,11 @@ namespace OrderService.Repositories
         {
             var currentVersion = await _eventStore.GetCurrentVersionAsync(orderId);
             return currentVersion > 0;
+        }
+
+        public async Task<IEnumerable<DomainEvent>> GetEventsAsync(string orderId)
+        {
+            return await _eventStore.GetEventsAsync(orderId);
         }
     }
 } 

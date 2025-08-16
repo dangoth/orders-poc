@@ -103,6 +103,20 @@ namespace OrderService.Controllers
             var order = await _orderService.GetOrderAsync(orderId);
             return Ok(order);
         }
+
+        [HttpGet("{orderId}/history")]
+        public async Task<IActionResult> GetOrderHistory(string orderId)
+        {
+            try
+            {
+                var history = await _orderService.GetOrderHistoryAsync(orderId);
+                return Ok(history);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("not found"))
+            {
+                return NotFound(new { Error = $"Order with id {orderId} not found" });
+            }
+        }
     }
 
     public class CancelOrderRequest
