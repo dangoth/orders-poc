@@ -1,6 +1,7 @@
 using RabbitMQ.Client;
 using Shared.Models;
 using Shared.RabbitMQ;
+using Shared.Services;
 using System.Text.Json;
 
 namespace ProcessingService.Services
@@ -13,26 +14,22 @@ namespace ProcessingService.Services
 
     public class ProcessingService : IProcessingService
     {
-        private readonly IRabbitMQPublisher _publisher;
+        private readonly IEventPublishingHelper _eventPublisher;
         private readonly IRabbitMQConsumer _consumer;
         private readonly ILogger<ProcessingService> _logger;
 
         public ProcessingService(
-            IRabbitMQPublisher publisher,
+            IEventPublishingHelper eventPublisher,
             IRabbitMQConsumer consumer,
             ILogger<ProcessingService> logger)
         {
-            _publisher = publisher;
+            _eventPublisher = eventPublisher;
             _consumer = consumer;
             _logger = logger;
         }
 
         public async Task InitializeAsync()
         {
-            await _publisher.InitializeAsync(
-                RabbitMQConstants.ProcessedOrdersExchange,
-                ExchangeType.Direct);
-
             await _consumer.InitializeAsync(
                 RabbitMQConstants.OrdersQueue,
                 RabbitMQConstants.OrdersExchange,
@@ -63,11 +60,8 @@ namespace ProcessingService.Services
                 await Task.Delay(1000);
                 order.Status = OrderStatus.Fulfilled;
 
-                var processedMessage = JsonSerializer.Serialize(order);
-                await _publisher.PublishAsync(
-                    RabbitMQConstants.ProcessedOrdersExchange,
-                    RabbitMQConstants.ProcessedOrdersRoutingKey,
-                    processedMessage);
+                var fulfilledEvent = new OrderFulfilledEvent(order.OrderId.ToString(), order);
+                await _eventPublisher.PublishToProcessedOrdersExchangeAsync(fulfilledEvent);
 
                 _logger.LogInformation("Order processed (legacy format): {OrderId}", order.OrderId);
             }
@@ -112,11 +106,7 @@ namespace ProcessingService.Services
                         domainEvent.AggregateId,
                         JsonSerializer.Deserialize<OrderMessage>(domainEvent.Data) ?? new OrderMessage());
                     
-                    var fulfilledMessage = JsonSerializer.Serialize(fulfilledEvent);
-                    await _publisher.PublishAsync(
-                        RabbitMQConstants.ProcessedOrdersExchange,
-                        RabbitMQConstants.ProcessedOrdersRoutingKey,
-                        fulfilledMessage);
+                    await _eventPublisher.PublishToProcessedOrdersExchangeAsync(fulfilledEvent);
                     break;
 
                 case nameof(OrderFulfilledEvent):
@@ -131,23 +121,24 @@ namespace ProcessingService.Services
                     _logger.LogInformation("Inventory released for order: {OrderId}", domainEvent.AggregateId);
                     break;
 
+                case nameof(LowStockWarningEvent):
+                    var warningData = JsonSerializer.Deserialize<LowStockWarningData>(domainEvent.Data);
+                    _logger.LogWarning("Low stock warning for product {ProductId}: {CurrentStock} units remaining", 
+                        warningData?.ProductId, warningData?.CurrentStock);
+                    break;
+
+                case nameof(RestockRequestEvent):
+                    var requestData = JsonSerializer.Deserialize<RestockRequestData>(domainEvent.Data);
+                    _logger.LogInformation("Restock request for product {ProductId}: {RequestedQuantity} units requested (Priority: {Priority})", 
+                        requestData?.ProductId, requestData?.RequestedQuantity, requestData?.Priority);
+                    break;
+
                 default:
                     _logger.LogInformation("Unhandled event type: {EventType}", domainEvent.EventType);
                     break;
             }
         }
 
-        private async Task PublishFulfilledEventAsync(DomainEvent domainEvent)
-        {
-            var orderMessage = DeserializeOrderMessage(domainEvent.Data);
-            var fulfilledEvent = new OrderFulfilledEvent(domainEvent.AggregateId, orderMessage);
-            var fulfilledMessage = JsonSerializer.Serialize(fulfilledEvent);
-            
-            await _publisher.PublishAsync(
-                RabbitMQConstants.ProcessedOrdersExchange,
-                RabbitMQConstants.ProcessedOrdersRoutingKey,
-                fulfilledMessage);
-        }
 
         private DomainEvent? TryDeserializeDomainEvent(string message)
         {
@@ -176,6 +167,8 @@ namespace ProcessingService.Services
                     nameof(InventoryReservedEvent) => JsonSerializer.Deserialize<InventoryReservedEvent>(message),
                     nameof(InventoryInsufficientEvent) => JsonSerializer.Deserialize<InventoryInsufficientEvent>(message),
                     nameof(InventoryReleasedEvent) => JsonSerializer.Deserialize<InventoryReleasedEvent>(message),
+                    nameof(LowStockWarningEvent) => JsonSerializer.Deserialize<LowStockWarningEvent>(message),
+                    nameof(RestockRequestEvent) => JsonSerializer.Deserialize<RestockRequestEvent>(message),
                     _ => null
                 };
             }

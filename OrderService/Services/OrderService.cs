@@ -1,9 +1,7 @@
-using RabbitMQ.Client;
-using Shared.Models;
-using Shared.RabbitMQ;
-using System.Text.Json;
 using OrderService.Models;
 using OrderService.Repositories;
+using Shared.Models;
+using Shared.Services;
 
 namespace OrderService.Services
 {
@@ -16,18 +14,19 @@ namespace OrderService.Services
         Task FulfillOrderAsync(string orderId);
         Task CancelOrderAsync(string orderId, string reason);
         Task<OrderAggregate> GetOrderAsync(string orderId);
+        Task<OrderHistoryResponse> GetOrderHistoryAsync(string orderId);
     }
 
     public class OrderService : IOrderService
     {
-        private readonly IRabbitMQPublisher _publisher;
+        private readonly IEventPublishingHelper _eventPublisher;
         private readonly ILogger<OrderService> _logger;
         private readonly IOrderRepository _orderRepository;
         private readonly IInventoryService _inventoryService;
 
-        public OrderService(IRabbitMQPublisher publisher, ILogger<OrderService> logger, IOrderRepository orderRepository, IInventoryService inventoryService)
+        public OrderService(IEventPublishingHelper eventPublisher, ILogger<OrderService> logger, IOrderRepository orderRepository, IInventoryService inventoryService)
         {
-            _publisher = publisher;
+            _eventPublisher = eventPublisher;
             _logger = logger;
             _orderRepository = orderRepository;
             _inventoryService = inventoryService;
@@ -52,11 +51,7 @@ namespace OrderService.Services
 
         private async Task PublishEventAsync(DomainEvent domainEvent)
         {
-            var message = JsonSerializer.Serialize(domainEvent);
-            await _publisher.PublishAsync(
-                RabbitMQConstants.OrdersExchange,
-                RabbitMQConstants.OrdersRoutingKey,
-                message);
+            await _eventPublisher.PublishToOrdersExchangeAsync(domainEvent);
         }
 
         private async Task<bool> TryReserveInventoryAsync(OrderAggregate aggregate)
@@ -86,9 +81,7 @@ namespace OrderService.Services
 
         public async Task InitializeAsync()
         {
-            await _publisher.InitializeAsync(
-                RabbitMQConstants.OrdersExchange,
-                ExchangeType.Direct);
+            await Task.CompletedTask;
         }
 
         public async Task<string> CreateOrderAsync(OrderMessage order)
@@ -145,7 +138,7 @@ namespace OrderService.Services
         {
             var aggregate = await _orderRepository.GetByIdAsync(orderId);
             
-            if (aggregate.Status != Shared.Models.OrderStatus.Pending)
+            if (aggregate.Status != OrderStatus.Pending)
             {
                 throw new InvalidOperationException($"Cannot process pending order in {aggregate.Status} status");
             }
@@ -185,6 +178,116 @@ namespace OrderService.Services
         public async Task<OrderAggregate> GetOrderAsync(string orderId)
         {
             return await _orderRepository.GetByIdAsync(orderId);
+        }
+
+        public async Task<OrderHistoryResponse> GetOrderHistoryAsync(string orderId)
+        {
+            var aggregate = await _orderRepository.GetByIdAsync(orderId);
+            var events = await _orderRepository.GetEventsAsync(orderId);
+
+            var historyEvents = events.Select(CreateHistoryEvent).ToList();
+
+            return new OrderHistoryResponse
+            {
+                OrderId = aggregate.Id,
+                CustomerName = aggregate.CustomerName,
+                TotalAmount = aggregate.TotalAmount,
+                CurrentStatus = aggregate.Status,
+                CreatedAt = aggregate.CreatedAt,
+                Events = historyEvents
+            };
+        }
+
+        private OrderHistoryEvent CreateHistoryEvent(DomainEvent domainEvent)
+        {
+            var historyEvent = new OrderHistoryEvent
+            {
+                EventType = domainEvent.EventType,
+                Timestamp = domainEvent.Timestamp,
+                Version = domainEvent.Version
+            };
+
+            switch (domainEvent)
+            {
+                case OrderCreatedEvent created:
+                    historyEvent.Description = "Order was created";
+                    historyEvent.StatusAfterEvent = OrderStatus.Created;
+                    break;
+
+                case InventoryReservationRequestedEvent inventoryRequested:
+                    historyEvent.Description = "Inventory reservation was requested";
+                    break;
+
+                case InventoryReservedEvent inventoryReserved:
+                    historyEvent.Description = "Inventory was successfully reserved";
+                    var reservationData = System.Text.Json.JsonSerializer.Deserialize<Shared.Models.InventoryReservationData>(domainEvent.Data);
+                    if (reservationData?.Reservations != null)
+                    {
+                        historyEvent.AdditionalData["reservations"] = reservationData.Reservations.Select(r => new
+                        {
+                            r.ProductId,
+                            r.QuantityRequested,
+                            r.QuantityReserved
+                        }).ToList();
+                    }
+                    break;
+
+                case InventoryInsufficientEvent inventoryInsufficient:
+                    historyEvent.Description = "Insufficient inventory - order cancelled";
+                    historyEvent.StatusAfterEvent = OrderStatus.Cancelled;
+                    var shortageData = System.Text.Json.JsonSerializer.Deserialize<Shared.Models.InventoryShortageData>(domainEvent.Data);
+                    if (shortageData?.Shortages != null)
+                    {
+                        historyEvent.AdditionalData["shortages"] = shortageData.Shortages.Select(s => new
+                        {
+                            s.ProductId,
+                            s.QuantityRequested,
+                            s.QuantityAvailable,
+                            s.Shortage
+                        }).ToList();
+                    }
+                    break;
+
+                case OrderPendingEvent pending:
+                    historyEvent.Description = "Order marked as pending due to inventory shortage";
+                    historyEvent.StatusAfterEvent = OrderStatus.Pending;
+                    break;
+
+                case OrderProcessingStartedEvent processing:
+                    historyEvent.Description = "Order processing started";
+                    historyEvent.StatusAfterEvent = OrderStatus.Processing;
+                    break;
+
+                case OrderFulfilledEvent fulfilled:
+                    historyEvent.Description = "Order was fulfilled";
+                    historyEvent.StatusAfterEvent = OrderStatus.Fulfilled;
+                    break;
+
+                case OrderCancelledEvent cancelled:
+                    historyEvent.Description = "Order was cancelled";
+                    historyEvent.StatusAfterEvent = OrderStatus.Cancelled;
+                    var orderData = System.Text.Json.JsonSerializer.Deserialize<OrderMessage>(domainEvent.Data);
+                    if (!string.IsNullOrEmpty(orderData?.Reason))
+                    {
+                        historyEvent.AdditionalData["cancellationReason"] = orderData.Reason;
+                    }
+                    break;
+
+                case InventoryReleasedEvent inventoryReleased:
+                    historyEvent.Description = "Inventory was released";
+                    var releaseData = System.Text.Json.JsonSerializer.Deserialize<Shared.Models.InventoryReleaseData>(domainEvent.Data);
+                    if (!string.IsNullOrEmpty(releaseData?.Reason))
+                    {
+                        historyEvent.AdditionalData["releaseReason"] = releaseData.Reason;
+                    }
+                    break;
+
+                default:
+                    historyEvent.Description = $"Unknown event: {domainEvent.EventType}";
+                    break;
+            }
+
+            return historyEvent;
         }
     }
 }

@@ -1,27 +1,21 @@
-using ProcessingService.Services;
+using RestockingService.Services;
 using Shared.RabbitMQ;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using RabbitMQ.Client;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
 builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddRabbitMQ("rabbitmq");
-builder.Services.AddScoped<IProcessingService, ProcessingService.Services.ProcessingService>();
-builder.Services.AddScoped<Shared.Services.IEventPublishingHelper, Shared.Services.EventPublishingHelper>();
+builder.Services.AddScoped<IRestockingService, RestockingService.Services.RestockingService>();
 builder.Services.AddHealthChecks()
     .AddRabbitMQ("amqp://guest:guest@rabbitmq:5672/", name: "rabbitmq");
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -29,9 +23,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.UseAuthorization();
-
 app.MapControllers();
 
 app.MapHealthChecks("/health", new HealthCheckOptions
@@ -54,11 +46,8 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 
 using (var scope = app.Services.CreateScope())
 {
-    var rabbitMQPublisher = scope.ServiceProvider.GetRequiredService<IRabbitMQPublisher>();
-    await rabbitMQPublisher.InitializeAsync(RabbitMQConstants.ProcessedOrdersExchange, ExchangeType.Direct);
-    
-    var processingService = scope.ServiceProvider.GetRequiredService<IProcessingService>();
-    await processingService.InitializeAsync();
+    var restockingService = scope.ServiceProvider.GetRequiredService<IRestockingService>();
+    await restockingService.InitializeAsync();
 }
 
 app.Run();

@@ -110,6 +110,11 @@ namespace OrderService.Services
                         JsonSerializer.Deserialize<OrderMessage>(eventStore.Data) ?? new OrderMessage()),
                     eventStore),
 
+                nameof(OrderPendingEvent) => CreateEvent(
+                    new OrderPendingEvent(eventStore.AggregateId,
+                        JsonSerializer.Deserialize<OrderMessage>(eventStore.Data) ?? new OrderMessage()),
+                    eventStore),
+
                 nameof(InventoryReservationRequestedEvent) => CreateEvent(
                     new InventoryReservationRequestedEvent(eventStore.AggregateId,
                         JsonSerializer.Deserialize<OrderMessage>(eventStore.Data) ?? new OrderMessage()),
