@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using OrderService.Models;
 using OrderService.Persistence;
 using Shared.Models;
+using Shared.Services;
 
 namespace OrderService.Services
 {
@@ -20,12 +21,14 @@ namespace OrderService.Services
         private readonly OrderDbContext _dbContext;
         private readonly ILogger<InventoryService> _logger;
         private readonly ILowStockWarningService _lowStockWarningService;
+        private readonly IEventPublishingHelper _eventPublisher;
 
-        public InventoryService(OrderDbContext dbContext, ILogger<InventoryService> logger, ILowStockWarningService lowStockWarningService)
+        public InventoryService(OrderDbContext dbContext, ILogger<InventoryService> logger, ILowStockWarningService lowStockWarningService, IEventPublishingHelper eventPublisher)
         {
             _dbContext = dbContext;
             _logger = logger;
             _lowStockWarningService = lowStockWarningService;
+            _eventPublisher = eventPublisher;
         }
 
         public async Task<InventoryCheckResult> CheckAndReserveInventoryAsync(string orderId, IEnumerable<OrderItem> items)
@@ -154,6 +157,17 @@ namespace OrderService.Services
                 await transaction.CommitAsync();
                 
                 _logger.LogInformation("Inventory released for order {OrderId}. Reason: {Reason}", orderId, reason);
+                
+                if (reservations.Any())
+                {
+                    var orderMessage = new OrderMessage();
+                    if (int.TryParse(orderId, out var orderIdInt))
+                    {
+                        orderMessage.OrderId = orderIdInt;
+                    }
+                    var inventoryReleasedEvent = new InventoryReleasedEvent(orderId, orderMessage, reason);
+                    await _eventPublisher.PublishToOrdersExchangeAsync(inventoryReleasedEvent);
+                }
                 
                 var affectedProductIds = reservations.Select(r => r.ProductId).Distinct();
                 await _lowStockWarningService.CheckAndWarnLowStockAsync(affectedProductIds);

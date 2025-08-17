@@ -72,8 +72,31 @@ namespace OrderService.Controllers
         [HttpPost("{orderId}/process")]
         public async Task<IActionResult> ProcessOrder(string orderId)
         {
-            await _orderService.ProcessOrderAsync(orderId);
-            return Ok(new { Message = "Order processing started" });
+            var result = await _orderService.ProcessOrderAsync(orderId);
+            
+            if (result.IsSuccessful)
+            {
+                return Ok(new { 
+                    Message = result.Message, 
+                    Status = result.Status.ToString(),
+                    Success = true
+                });
+            }
+            else
+            {
+                return Ok(new { 
+                    Message = result.Message, 
+                    Status = result.Status.ToString(),
+                    Success = false,
+                    Warning = "Order is pending due to insufficient inventory",
+                    Shortages = result.Shortages?.Select(s => new {
+                        s.ProductId,
+                        s.QuantityRequested,
+                        s.QuantityAvailable,
+                        s.Shortage
+                    })
+                });
+            }
         }
 
         [HttpPost("{orderId}/process-pending")]

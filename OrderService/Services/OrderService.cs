@@ -9,7 +9,7 @@ namespace OrderService.Services
     {
         Task InitializeAsync();
         Task<string> CreateOrderAsync(OrderMessage order);
-        Task ProcessOrderAsync(string orderId);
+        Task<OrderProcessingResult> ProcessOrderAsync(string orderId);
         Task ProcessPendingOrderAsync(string orderId);
         Task FulfillOrderAsync(string orderId);
         Task CancelOrderAsync(string orderId, string reason);
@@ -54,7 +54,7 @@ namespace OrderService.Services
             await _eventPublisher.PublishToOrdersExchangeAsync(domainEvent);
         }
 
-        private async Task<bool> TryReserveInventoryAsync(OrderAggregate aggregate)
+        private async Task<(bool Success, List<InventoryShortageItem> Shortages)> TryReserveInventoryAsync(OrderAggregate aggregate)
         {
             var inventoryResult = await _inventoryService.CheckAndReserveInventoryAsync(
                 aggregate.Id, 
@@ -64,7 +64,7 @@ namespace OrderService.Services
             {
                 aggregate.ReserveInventory(inventoryResult.Reservations);
                 await SaveAndPublishEventsAsync(aggregate, "Inventory reserved for order: {0}");
-                return true;
+                return (true, new List<InventoryShortageItem>());
             }
             else
             {
@@ -73,7 +73,7 @@ namespace OrderService.Services
                 
                 _logger.LogWarning("Insufficient inventory for order {OrderId}. Order marked as pending. Shortages: {Shortages}", 
                     aggregate.Id, string.Join(", ", inventoryResult.Shortages.Select(s => $"{s.ProductId}: {s.Shortage}")));
-                return false;
+                return (false, inventoryResult.Shortages);
             }
         }
 
@@ -118,19 +118,35 @@ namespace OrderService.Services
             return aggregate.Id;
         }
 
-        public async Task ProcessOrderAsync(string orderId)
+        public async Task<OrderProcessingResult> ProcessOrderAsync(string orderId)
         {
             var aggregate = await _orderRepository.GetByIdAsync(orderId);
             
             aggregate.RequestInventoryReservation();
             await SaveAndPublishEventsAsync(aggregate, "Inventory reservation requested for order: {0}");
 
-            var inventoryReserved = await TryReserveInventoryAsync(aggregate);
+            var (inventoryReserved, shortages) = await TryReserveInventoryAsync(aggregate);
             
             if (inventoryReserved)
             {
                 aggregate.StartProcessing();
                 await SaveAndPublishEventsAsync(aggregate, "Order processing started: {0}");
+                return new OrderProcessingResult 
+                { 
+                    IsSuccessful = true, 
+                    Status = aggregate.Status,
+                    Message = "Order processing started successfully"
+                };
+            }
+            else
+            {
+                return new OrderProcessingResult 
+                { 
+                    IsSuccessful = false, 
+                    Status = aggregate.Status,
+                    Message = "Order marked as pending due to insufficient inventory",
+                    Shortages = shortages
+                };
             }
         }
 
@@ -146,7 +162,7 @@ namespace OrderService.Services
             aggregate.RequestInventoryReservation();
             await SaveAndPublishEventsAsync(aggregate, "Inventory reservation re-requested for pending order: {0}");
 
-            var inventoryReserved = await TryReserveInventoryAsync(aggregate);
+            var (inventoryReserved, shortages) = await TryReserveInventoryAsync(aggregate);
             
             if (inventoryReserved)
             {
