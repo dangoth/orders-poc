@@ -1,43 +1,13 @@
-using OrderService.Services;
-using OrderService.Repositories;
-using Shared.RabbitMQ;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using RabbitMQ.Client;
-using OrderService.Persistence;
 using Microsoft.EntityFrameworkCore;
+using OrderService.Configuration;
+using OrderService.Persistence;
+using OrderService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
-builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-builder.Services.AddRabbitMQ("rabbitmq");
-builder.Services.AddScoped<IOrderService, OrderService.Services.OrderService>();
-builder.Services.AddScoped<IOrderRepository, OrderRepository>();
-builder.Services.AddScoped<IEventStoreService, EventStoreService>();
-builder.Services.AddScoped<IInventoryService, InventoryService>();
-builder.Services.AddScoped<ILowStockWarningService, LowStockWarningService>();
-builder.Services.AddScoped<IRabbitMQInitializationService, RabbitMQInitializationService>();
-builder.Services.AddScoped<Shared.Services.IEventPublishingHelper, Shared.Services.EventPublishingHelper>();
-builder.Services.AddHealthChecks()
-    .AddRabbitMQ(sp => 
-    {
-        var factory = new ConnectionFactory 
-        { 
-            HostName = "rabbitmq",
-            UserName = "guest",
-            Password = "guest"
-        };  
-        return Task.FromResult(factory.CreateConnectionAsync().GetAwaiter().GetResult());
-    }, name: "rabbitmq");
-
-builder.Services.AddDbContext<OrderDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+// Add all services using the extension method
+builder.Services.AddOrderServiceDependencies(builder.Configuration);
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
