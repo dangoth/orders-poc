@@ -22,6 +22,7 @@ namespace OrderService.Configuration
             services.AddScoped<IEventStoreService, EventStoreService>();
             services.AddScoped<IInventoryService, InventoryService>();
             services.AddScoped<ILowStockWarningService, LowStockWarningService>();
+            services.AddScoped<IOrderValidationService, OrderValidationService>();
             services.AddScoped<IRabbitMQInitializationService, RabbitMQInitializationService>();
             services.AddScoped<Shared.Services.IEventPublishingHelper, Shared.Services.EventPublishingHelper>();
 

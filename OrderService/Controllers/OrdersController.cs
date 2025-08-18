@@ -9,11 +9,15 @@ namespace OrderService.Controllers
     public class OrdersController : ControllerBase
     {
         private readonly IOrderService _orderService;
+        private readonly IInventoryService _inventoryService;
+        private readonly IOrderValidationService _validationService;
         private readonly ILogger<OrdersController> _logger;
 
-        public OrdersController(IOrderService orderService, ILogger<OrdersController> logger)
+        public OrdersController(IOrderService orderService, IInventoryService inventoryService, IOrderValidationService validationService, ILogger<OrdersController> logger)
         {
             _orderService = orderService;
+            _inventoryService = inventoryService;
+            _validationService = validationService;
             _logger = logger;
         }
 
@@ -25,18 +29,10 @@ namespace OrderService.Controllers
                 return BadRequest(ModelState);
             }
 
-            if (request.Items == null || !request.Items.Any())
+            var validationResult = _validationService.ValidateCreateOrderRequest(request);
+            if (!validationResult.IsValid)
             {
-                return BadRequest(new { Error = "At least one product must be selected" });
-            }
-            if (request.Items.Any(item => item.Quantity <= 0))
-            {
-                return BadRequest(new { Error = "All product quantities must be greater than 0" });
-            }
-
-            if (request.Items.Any(item => string.IsNullOrWhiteSpace(item.ProductId)))
-            {
-                return BadRequest(new { Error = "All products must have valid product IDs" });
+                return BadRequest(new { validationResult.Errors });
             }
 
             var mergedItems = request.Items
@@ -60,8 +56,36 @@ namespace OrderService.Controllers
 
             try
             {
+                var productIds = mergedItems.Select(item => item.ProductId).ToArray();
+                var stockInfo = await _inventoryService.GetDetailedAvailabilityAsync(productIds);
+                var warnings = new List<string>();
+
+                foreach (var item in mergedItems)
+                {
+                    var stock = stockInfo.FirstOrDefault(s => s.ProductId == item.ProductId);
+                    if (stock != null && item.Quantity > stock.QuantityAvailable)
+                    {
+                        if (stock.QuantityAvailable == 0)
+                        {
+                            warnings.Add($"Product '{stock.ProductName}' ({item.ProductId}) is out of stock. Requested: {item.Quantity}, Available: 0");
+                        }
+                        else
+                        {
+                            warnings.Add($"Product '{stock.ProductName}' ({item.ProductId}) has insufficient stock. Requested: {item.Quantity}, Available: {stock.QuantityAvailable}");
+                        }
+                    }
+                }
+
                 var orderId = await _orderService.CreateOrderAsync(orderMessage);
-                return Ok(new { OrderId = orderId, Message = "Order created successfully", TotalAmount = orderMessage.TotalAmount });
+                
+                var response = new { 
+                    OrderId = orderId, 
+                    Message = "Order created successfully", 
+                    TotalAmount = orderMessage.TotalAmount,
+                    Warnings = warnings.ToArray()
+                };
+                
+                return Ok(response);
             }
             catch (ArgumentException ex)
             {

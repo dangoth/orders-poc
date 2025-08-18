@@ -12,6 +12,7 @@ namespace OrderService.Services
         Task ReleaseInventoryAsync(string orderId, string reason);
         Task FulfillInventoryAsync(string orderId);
         Task<bool> IsInventoryAvailableAsync(IEnumerable<string> productIds);
+        Task<List<ProductAvailabilityInfo>> GetDetailedAvailabilityAsync(IEnumerable<string> productIds);
         Task<List<Product>> GetProductsAsync(IEnumerable<string> productIds);
         Task SeedInventoryDataAsync();
     }
@@ -216,6 +217,61 @@ namespace OrderService.Services
                 inventoryItems.Any(i => i.ProductId == productId && i.QuantityAvailable > 0));
         }
 
+        public async Task<List<ProductAvailabilityInfo>> GetDetailedAvailabilityAsync(IEnumerable<string> productIds)
+        {
+            var productIdsList = productIds.ToList();
+            var inventoryData = await _dbContext.InventoryItems
+                .Include(i => i.Product)
+                .Where(i => productIdsList.Contains(i.ProductId))
+                .ToListAsync();
+
+            var result = new List<ProductAvailabilityInfo>();
+
+            foreach (var productId in productIdsList)
+            {
+                var inventoryItem = inventoryData.FirstOrDefault(i => i.ProductId == productId);
+                
+                if (inventoryItem == null)
+                {
+                    result.Add(new ProductAvailabilityInfo
+                    {
+                        ProductId = productId,
+                        ProductName = "Unknown Product",
+                        QuantityAvailable = 0,
+                        StockStatus = "out_of_stock",
+                        StockMessage = "Product not found"
+                    });
+                    continue;
+                }
+
+                var quantity = inventoryItem.QuantityAvailable;
+                var (status, message) = GetStockStatusAndMessage(quantity);
+
+                result.Add(new ProductAvailabilityInfo
+                {
+                    ProductId = productId,
+                    ProductName = inventoryItem.Product.Name,
+                    QuantityAvailable = quantity,
+                    StockStatus = status,
+                    StockMessage = message
+                });
+            }
+
+            return result;
+        }
+
+        private static (string status, string message) GetStockStatusAndMessage(int quantity)
+        {
+            return quantity switch
+            {
+                0 => ("out_of_stock", "Out of stock"),
+                1 => ("critical_low", "Only 1 item remaining - order soon!"),
+                >= 2 and <= 5 => ("low_stock", $"Stock running low - only {quantity} items left"),
+                >= 6 and <= 20 => ("moderate_stock", $"In stock - {quantity} items available"),
+                _ => ("high_stock", "Well stocked - plenty available")
+            };
+        }
+
         public async Task<List<Product>> GetProductsAsync(IEnumerable<string> productIds)
         {
             var productIdsList = productIds.ToList();
@@ -263,5 +319,14 @@ namespace OrderService.Services
         public bool IsSuccessful { get; set; } = true;
         public List<InventoryReservationItem> Reservations { get; set; } = new();
         public List<InventoryShortageItem> Shortages { get; set; } = new();
+    }
+
+    public class ProductAvailabilityInfo
+    {
+        public string ProductId { get; set; } = string.Empty;
+        public string ProductName { get; set; } = string.Empty;
+        public int QuantityAvailable { get; set; }
+        public string StockStatus { get; set; } = string.Empty;
+        public string StockMessage { get; set; } = string.Empty;
     }
 }

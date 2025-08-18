@@ -8,20 +8,23 @@ namespace OrderService.Controllers
     public class InventoryController : ControllerBase
     {
         private readonly IInventoryService _inventoryService;
+        private readonly IOrderValidationService _validationService;
         private readonly ILogger<InventoryController> _logger;
 
-        public InventoryController(IInventoryService inventoryService, ILogger<InventoryController> logger)
+        public InventoryController(IInventoryService inventoryService, IOrderValidationService validationService, ILogger<InventoryController> logger)
         {
             _inventoryService = inventoryService;
+            _validationService = validationService;
             _logger = logger;
         }
 
         [HttpGet("products")]
         public async Task<IActionResult> GetProducts([FromQuery] string[] productIds)
         {
-            if (!productIds.Any())
+            var validationResult = _validationService.ValidateProductIds(productIds);
+            if (!validationResult.IsValid)
             {
-                return BadRequest("At least one product ID must be provided");
+                return BadRequest(new { Errors = validationResult.Errors });
             }
 
             var products = await _inventoryService.GetProductsAsync(productIds);
@@ -31,13 +34,14 @@ namespace OrderService.Controllers
         [HttpGet("availability")]
         public async Task<IActionResult> CheckAvailability([FromQuery] string[] productIds)
         {
-            if (!productIds.Any())
+            var validationResult = _validationService.ValidateProductIds(productIds);
+            if (!validationResult.IsValid)
             {
-                return BadRequest("At least one product ID must be provided");
+                return BadRequest(new { validationResult.Errors });
             }
 
-            var isAvailable = await _inventoryService.IsInventoryAvailableAsync(productIds);
-            return Ok(new { ProductIds = productIds, IsAvailable = isAvailable });
+            var detailedAvailability = await _inventoryService.GetDetailedAvailabilityAsync(productIds);
+            return Ok(new { Products = detailedAvailability });
         }
 
         [HttpPost("seed")]
